@@ -1,6 +1,5 @@
-// name: nurdspace-random-project-widget.js
-// description: Random OR Latest Nurdspace project + Space status + Power usage (SpaceAPI or Main_Page) + sparkline
-// mode: set PROJECT_MODE to "random" or "latest"
+// name: nurdspace-iOS-widget.js
+// description: Nurdspace Space Status + Power usage + sparkline + Random/Latest project with Retro CRT terminal aesthetic
 
 const WIKI_BASE = "https://nurdspace.nl";
 const PROJECTS_URL = "https://nurdspace.nl/Projects";
@@ -14,31 +13,55 @@ const STATUS_TAP_URL = MAIN_PAGE_URL;
 // =====================================================
 const PROJECT_MODE = "latest";
 
+// =====================================================
+// Theme: "light-crt" | "cga"
+// =====================================================
+const THEME = "cga";
+
+// =====================================================
+// CRT intensity (only affects light-crt)
+// 0.6 = subtle, 1.0 = default, 1.4 = strong
+// =====================================================
+const CRT_INTENSITY = 1.15;
+
 // Power history cache
 const POWER_HISTORY_FILE = "nurdspace_power_history.json";
 const POWER_HISTORY_MAX = 48;
 
-// Theme
-const TEXT = new Color("#000000");
-const SUBTEXT = new Color("#333333");
-const ACCENT = new Color("#00aa00");
-const RED = new Color("#b00020");
+// Theme colors (overridden per theme)
+let TEXT = new Color("#000000");
+let SUBTEXT = new Color("#333333");
+let ACCENT = new Color("#00aa00");
+let RED = new Color("#b00020");
 
-// ----------------------------------------------------
+applyTheme();
 
 const widget = await createWidget();
 if (!config.runsInWidget) await widget.presentMedium();
 else Script.setWidget(widget);
 Script.complete();
 
+function applyTheme() {
+  if (THEME === "cga") {
+    TEXT = new Color("#00ff66");
+    SUBTEXT = new Color("#00cc55");
+    ACCENT = new Color("#00ff66");
+    RED = new Color("#ff3366");
+  } else {
+    TEXT = new Color("#000000");
+    SUBTEXT = new Color("#333333");
+    ACCENT = new Color("#00aa00");
+    RED = new Color("#b00020");
+  }
+}
+
 async function createWidget() {
   const w = new ListWidget();
   w.setPadding(16, 16, 16, 16);
 
-  const grad = new LinearGradient();
-  grad.locations = [0, 1];
-  grad.colors = [new Color("#ffffff"), new Color("#f3fff3")];
-  w.backgroundGradient = grad;
+  // Retro CRT background
+  if (THEME === "cga") w.backgroundImage = drawTerminalBackgroundCGA(900, 420);
+  else w.backgroundImage = drawTerminalBackgroundLightCRT(900, 420);
 
   // Header
   const header = w.addStack();
@@ -64,7 +87,7 @@ async function createWidget() {
   w.addSpacer(10);
 
   // Space status + power
-  const space = await getSpaceStatusAndPower(); // includes watts (may be null)
+  const space = await getSpaceStatusAndPower();
   const isOpen = space?.open === true;
 
   // Status row
@@ -77,8 +100,11 @@ async function createWidget() {
   pill.url = STATUS_TAP_URL;
 
   if (space) {
-    if (isOpen) pill.backgroundImage = drawScanlinePillBackground(520, 48);
-    else pill.backgroundColor = new Color("#ffe8e8");
+    if (isOpen) {
+      pill.backgroundImage = drawScanlinePillBackground(520, 48, THEME);
+    } else {
+      pill.backgroundColor = THEME === "cga" ? new Color("#101010") : new Color("#ffe8e8");
+    }
 
     const inner = pill.addStack();
     inner.centerAlignContent();
@@ -100,10 +126,10 @@ async function createWidget() {
     const label = `${isOpen ? "OPEN" : "CLOSED"}${space.message ? ` · ${space.message}` : ""}`;
     const pillText = inner.addText(label);
     pillText.font = Font.boldMonospacedSystemFont(12);
-    pillText.textColor = isOpen ? new Color("#063b06") : RED;
+    pillText.textColor = isOpen ? (THEME === "cga" ? TEXT : new Color("#063b06")) : RED;
     pillText.lineLimit = 1;
   } else {
-    pill.backgroundColor = new Color("#efefef");
+    pill.backgroundColor = THEME === "cga" ? new Color("#111111") : new Color("#efefef");
     const pillText = pill.addText("STATUS UNKNOWN");
     pillText.font = Font.boldMonospacedSystemFont(12);
     pillText.textColor = SUBTEXT;
@@ -148,13 +174,10 @@ async function createWidget() {
 
   w.addSpacer(12);
 
-  // ----------------------------------------------------
-  // Project selection (random or latest)
-  // ----------------------------------------------------
+  // Project selection
   let picked;
-  if (PROJECT_MODE === "latest") {
-    picked = await getLatestProject();
-  } else {
+  if (PROJECT_MODE === "latest") picked = await getLatestProject();
+  else {
     const projects = await getProjects();
     if (!projects.length) {
       const t = w.addText("No projects found");
@@ -215,7 +238,6 @@ async function createWidget() {
 async function getSpaceStatusAndPower() {
   let open = null, message = "", lastchange = null, watts = null;
 
-  // 1) SpaceAPI (status + maybe power)
   try {
     const r = new Request(SPACEAPI_STATUS_URL);
     r.headers = { "User-Agent": "Mozilla/5.0", "Accept": "application/json" };
@@ -225,24 +247,17 @@ async function getSpaceStatusAndPower() {
     message = (j?.state?.message || "").toString();
     lastchange = typeof j?.state?.lastchange === "number" ? j.state.lastchange : null;
 
-    watts = extractWattsFromSpaceApi(j); // might still be null
+    watts = extractWattsFromSpaceApi(j);
   } catch (_) {}
 
-  // 2) Fallback: scrape Main_Page for "Power usage: 1037.0W"
   if (watts === null) {
     const scraped = await scrapeWattsFromMainPage();
     if (typeof scraped === "number" && isFinite(scraped)) watts = scraped;
   }
 
-  // If we failed everything, return null
   if (open === null && watts === null && !message) return null;
 
-  return {
-    open: open === true,
-    message,
-    lastchange,
-    watts
-  };
+  return { open: open === true, message, lastchange, watts };
 }
 
 function extractWattsFromSpaceApi(j) {
@@ -256,9 +271,7 @@ function extractWattsFromSpaceApi(j) {
     for (const it of arr) {
       const unit = (it?.unit || "").toString().trim();
       const val = it?.value;
-      if ((unit === "W" || unit.toLowerCase() === "w") && typeof val === "number") {
-        candidates.push(val);
-      }
+      if ((unit === "W" || unit.toLowerCase() === "w") && typeof val === "number") candidates.push(val);
     }
   });
 
@@ -269,11 +282,8 @@ function extractWattsFromSpaceApi(j) {
 async function scrapeWattsFromMainPage() {
   try {
     const html = await fetchText(MAIN_PAGE_URL);
-
-    // Matches: "Power usage: 1037.0W" (allow spaces)
     const m = /Power usage:\s*([0-9]+(?:\.[0-9]+)?)\s*W/i.exec(html);
     if (!m) return null;
-
     const v = parseFloat(m[1]);
     return isFinite(v) ? v : null;
   } catch {
@@ -287,8 +297,8 @@ async function getLatestProject() {
   try {
     const url =
       "https://nurdspace.nl/api.php?action=query&list=recentchanges" +
-      "&rcnamespace=0" +          // main namespace only
-      "&rclimit=30" +
+      "&rcnamespace=0" +
+      "&rclimit=50" +
       "&rcprop=title|timestamp" +
       "&format=json";
 
@@ -298,22 +308,18 @@ async function getLatestProject() {
 
     const changes = json?.query?.recentchanges || [];
     for (const c of changes) {
-      const title = c?.title;
+      const title = (c?.title || "").trim();
       if (!title) continue;
 
-      // Filter out non-project-ish pages
-      if (title.includes(":")) continue;     // File:, Talk:, Category:, etc.
-      if (title === "Main Page") continue;
-      if (title === "Main_Page") continue;
+      // Hard filters (defensive)
+      if (title.includes(":")) continue; // User:, Template:, File:, Category:, etc.
+      if (title === "Main Page" || title === "Main_Page") continue;
 
-      return {
-        title,
-        url: "/" + title.replace(/ /g, "_")
-      };
+      return { title, url: "/" + title.replace(/ /g, "_") };
     }
   } catch (_) {}
 
-  // Fallback: random from projects list
+  // Fallback to random
   const projects = await getProjects();
   return projects[Math.floor(Math.random() * projects.length)];
 }
@@ -343,9 +349,7 @@ function writePowerHistory(history) {
 
 function appendPowerHistory(history, watts) {
   history.values.push(watts);
-  if (history.values.length > POWER_HISTORY_MAX) {
-    history.values = history.values.slice(-POWER_HISTORY_MAX);
-  }
+  if (history.values.length > POWER_HISTORY_MAX) history.values = history.values.slice(-POWER_HISTORY_MAX);
 }
 
 function drawSparkline(values, width, height) {
@@ -355,7 +359,7 @@ function drawSparkline(values, width, height) {
   ctx.respectScreenScale = true;
 
   if (!values || values.length < 2) {
-    ctx.setStrokeColor(new Color("#00aa00", 0.25));
+    ctx.setStrokeColor(new Color(ACCENT.hex, 0.25));
     ctx.setLineWidth(2);
     const p = new Path();
     p.move(new Point(0, height - 3));
@@ -368,7 +372,6 @@ function drawSparkline(values, width, height) {
   const min = Math.min(...values);
   const max = Math.max(...values);
   const span = Math.max(1, max - min);
-
   const stepX = width / (values.length - 1);
 
   const path = new Path();
@@ -380,12 +383,12 @@ function drawSparkline(values, width, height) {
     else path.addLine(new Point(x, y));
   }
 
-  ctx.setStrokeColor(new Color("#00aa00", 0.85));
+  ctx.setStrokeColor(new Color(ACCENT.hex, 0.9));
   ctx.setLineWidth(2);
   ctx.addPath(path);
   ctx.strokePath();
 
-  ctx.setFillColor(new Color("#00aa00", 0.85));
+  ctx.setFillColor(new Color(ACCENT.hex, 0.9));
   const lastNorm = (values[values.length - 1] - min) / span;
   const lastY = (height - 2) - lastNorm * (height - 4);
   ctx.fillEllipse(new Rect(width - 3, lastY - 3, 6, 6));
@@ -393,39 +396,120 @@ function drawSparkline(values, width, height) {
   return ctx.getImage();
 }
 
-// -------- Status pill scanlines --------
+// -------- Retro CRT backgrounds --------
 
-function drawScanlinePillBackground(width, height) {
+function drawTerminalBackgroundLightCRT(width, height) {
+  const ctx = new DrawContext();
+  ctx.size = new Size(width, height);
+  ctx.opaque = true;
+
+  // Slightly darker base so scanlines/noise are visible
+  ctx.setFillColor(new Color("#f2fff2"));
+  ctx.fillRect(new Rect(0, 0, width, height));
+
+  // Terminal noise text (stronger than before)
+  ctx.setFont(Font.mediumMonospacedSystemFont(12));
+  ctx.setTextColor(new Color("#00aa00", clamp01(0.06 * CRT_INTENSITY)));
+
+  const lines = Math.floor(height / 24);
+  for (let i = 0; i < lines; i++) {
+    const y = 8 + i * 24;
+    const txt = `$ ssh nurd@space | git pull | make all | pwr=${randInt(200, 1800)}W | 0x${randHex(6)}`;
+    ctx.drawText(txt, new Point(12, y));
+  }
+
+  // CRT scanlines (stronger)
+  const scanAlpha = clamp01(0.055 * CRT_INTENSITY);
+  for (let y = 0; y < height; y += 3) {
+    ctx.setFillColor(new Color("#000000", scanAlpha));
+    ctx.fillRect(new Rect(0, y, width, 1));
+  }
+
+  // Phosphor glow band
+  ctx.setFillColor(new Color("#00aa00", clamp01(0.06 * CRT_INTENSITY)));
+  ctx.fillRect(new Rect(0, Math.floor(height * 0.28), width, Math.floor(height * 0.22)));
+
+  // Random “fuzz” pixels (very subtle)
+  const fuzzAlpha = clamp01(0.06 * (CRT_INTENSITY - 0.2));
+  ctx.setFillColor(new Color("#00aa00", fuzzAlpha));
+  for (let i = 0; i < 220; i++) {
+    const x = randInt(0, width - 2);
+    const y = randInt(0, height - 2);
+    if (Math.random() < 0.6) ctx.fillRect(new Rect(x, y, 1, 1));
+  }
+
+  // Vignette edges (no gradients; layered rectangles)
+  const steps = 8;
+  for (let i = 0; i < steps; i++) {
+    const inset = i * 8;
+    const a = (i + 1) / steps;
+    ctx.setStrokeColor(new Color("#000000", 0.015 * a));
+    ctx.setLineWidth(10);
+    ctx.strokeRect(new Rect(inset, inset, width - inset * 2, height - inset * 2));
+  }
+
+  return ctx.getImage();
+}
+
+function drawTerminalBackgroundCGA(width, height) {
+  const ctx = new DrawContext();
+  ctx.size = new Size(width, height);
+  ctx.opaque = true;
+
+  ctx.setFillColor(new Color("#040704"));
+  ctx.fillRect(new Rect(0, 0, width, height));
+
+  ctx.setFont(Font.mediumMonospacedSystemFont(12));
+  ctx.setTextColor(new Color("#00ff66", 0.20));
+
+  const lines = Math.floor(height / 22);
+  for (let i = 0; i < lines; i++) {
+    const y = 8 + i * 22;
+    const txt = `nurdspace@space:~$ pwr=${randInt(200, 1800)}W  0x${randHex(10)}`;
+    ctx.drawText(txt, new Point(12, y));
+  }
+
+  for (let y = 0; y < height; y += 3) {
+    ctx.setFillColor(new Color("#000000", 0.16));
+    ctx.fillRect(new Rect(0, y, width, 1));
+  }
+
+  // Glow band
+  ctx.setFillColor(new Color("#00ff66", 0.08));
+  ctx.fillRect(new Rect(0, Math.floor(height * 0.25), width, Math.floor(height * 0.25)));
+
+  return ctx.getImage();
+}
+
+function drawScanlinePillBackground(width, height, theme) {
   const ctx = new DrawContext();
   ctx.size = new Size(width, height);
   ctx.opaque = false;
   ctx.respectScreenScale = true;
 
-  ctx.setFillColor(new Color("#e8ffe8"));
+  ctx.setFillColor(theme === "cga" ? new Color("#071007") : new Color("#e8ffe8"));
   ctx.fillRect(new Rect(0, 0, width, height));
 
   for (let y = 0; y < height; y += 3) {
-    ctx.setFillColor(new Color("#00aa00", 0.08));
+    ctx.setFillColor(theme === "cga" ? new Color("#00ff66", 0.10) : new Color("#00aa00", 0.10));
     ctx.fillRect(new Rect(0, y, width, 1));
   }
 
-  ctx.setFillColor(new Color("#00aa00", 0.06));
+  ctx.setFillColor(theme === "cga" ? new Color("#00ff66", 0.06) : new Color("#00aa00", 0.06));
   ctx.fillRect(new Rect(0, Math.floor(height * 0.35), width, Math.floor(height * 0.3)));
 
   return ctx.getImage();
 }
 
-// -------- Formatting / parsing / misc --------
+// -------- Misc helpers --------
 
 function formatAgo(unixSeconds) {
   const now = Date.now();
   const then = unixSeconds * 1000;
   let diff = Math.max(0, Math.floor((now - then) / 1000));
-
   const m = Math.floor(diff / 60);
   const h = Math.floor(m / 60);
   const d = Math.floor(h / 24);
-
   if (d > 0) return `${d}d ago`;
   if (h > 0) return `${h}h ago`;
   if (m > 0) return `${m}m ago`;
@@ -435,7 +519,7 @@ function formatAgo(unixSeconds) {
 function addPlaceholder(row) {
   const ph = row.addStack();
   ph.size = new Size(95, 70);
-  ph.backgroundColor = new Color("#e8ffe8");
+  ph.backgroundColor = THEME === "cga" ? new Color("#071007") : new Color("#e8ffe8");
   ph.cornerRadius = 10;
 
   const sym = SFSymbol.named("hammer");
@@ -453,11 +537,9 @@ async function getProjects() {
   while ((m = re.exec(html))) {
     const href = m[1];
     const text = strip(m[2]);
-
     if (!href || !href.startsWith("/")) continue;
     if (href.includes("Special:") || href.includes("Help:") || href.includes("Category:") || href.includes("File:") || href.includes("Talk:")) continue;
     if (href === "/Projects") continue;
-
     links.push({ title: text, url: href });
   }
 
@@ -497,4 +579,19 @@ function absolutize(u) {
   if (!u) return u;
   if (u.startsWith("http")) return u;
   return WIKI_BASE + u;
+}
+
+function randHex(n) {
+  const chars = "0123456789abcdef";
+  let out = "";
+  for (let i = 0; i < n; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  return out;
+}
+
+function randInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function clamp01(x) {
+  return Math.max(0, Math.min(1, x));
 }
