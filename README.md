@@ -35,4 +35,4 @@ Instantly see:
 ## 📸 Screenshot
 
 ```md
-![Widget Screenshot](IMG_1738.jpeg)
+![Widget Screenshot]([IMG_y1738.jpeg](https://github.com/NURDspace/Scriptable-iOS-Nurdspace-wiki/blob/main/IMG_1738.jpeg))
