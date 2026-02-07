@@ -1,5 +1,5 @@
 // name: nurdspace-iOS-widget.js
-// description: Nurdspace Space Status + Power usage + sparkline + Random/Latest project with Retro CRT terminal aesthetic
+// description: Nurdspace Space Status + Power usage + sparkline + Random/Latest project with Retro CRT/Terminal themes (light-crt = phosphor green, cga = classic CGA palette)
 
 const WIKI_BASE = "https://nurdspace.nl";
 const PROJECTS_URL = "https://nurdspace.nl/Projects";
@@ -15,12 +15,14 @@ const PROJECT_MODE = "latest";
 
 // =====================================================
 // Theme: "light-crt" | "cga"
+// light-crt = green phosphor CRT terminal (dark, scanlines, glow)
+// cga       = classic CGA-ish palette (cyan/magenta/white on black)
 // =====================================================
 const THEME = "cga";
 
 // =====================================================
-// CRT intensity (only affects light-crt)
-// 0.6 = subtle, 1.0 = default, 1.4 = strong
+// CRT intensity (mainly affects light-crt)
+// 1.0 default, 1.3 stronger
 // =====================================================
 const CRT_INTENSITY = 1.15;
 
@@ -28,11 +30,13 @@ const CRT_INTENSITY = 1.15;
 const POWER_HISTORY_FILE = "nurdspace_power_history.json";
 const POWER_HISTORY_MAX = 48;
 
-// Theme colors (overridden per theme)
-let TEXT = new Color("#000000");
-let SUBTEXT = new Color("#333333");
-let ACCENT = new Color("#00aa00");
-let RED = new Color("#b00020");
+// Theme colors (overridden by applyTheme)
+let TEXT = new Color("#00ff66");
+let SUBTEXT = new Color("#00cc55");
+let ACCENT = new Color("#00ff66");
+let RED = new Color("#ff3366");
+
+// ----------------------------------------------------
 
 applyTheme();
 
@@ -43,15 +47,17 @@ Script.complete();
 
 function applyTheme() {
   if (THEME === "cga") {
+    // Classic CGA vibe (cyan/magenta/white on black)
+    TEXT = new Color("#ffffff");
+    SUBTEXT = new Color("#a8a8a8");
+    ACCENT = new Color("#00ffff"); // cyan
+    RED = new Color("#ff55ff");    // magenta-ish
+  } else {
+    // Green phosphor CRT terminal
     TEXT = new Color("#00ff66");
     SUBTEXT = new Color("#00cc55");
     ACCENT = new Color("#00ff66");
     RED = new Color("#ff3366");
-  } else {
-    TEXT = new Color("#000000");
-    SUBTEXT = new Color("#333333");
-    ACCENT = new Color("#00aa00");
-    RED = new Color("#b00020");
   }
 }
 
@@ -59,9 +65,9 @@ async function createWidget() {
   const w = new ListWidget();
   w.setPadding(16, 16, 16, 16);
 
-  // Retro CRT background
-  if (THEME === "cga") w.backgroundImage = drawTerminalBackgroundCGA(900, 420);
-  else w.backgroundImage = drawTerminalBackgroundLightCRT(900, 420);
+  // Background
+  if (THEME === "cga") w.backgroundImage = drawBackgroundCGA(900, 420);
+  else w.backgroundImage = drawBackgroundPhosphor(900, 420);
 
   // Header
   const header = w.addStack();
@@ -101,9 +107,9 @@ async function createWidget() {
 
   if (space) {
     if (isOpen) {
-      pill.backgroundImage = drawScanlinePillBackground(520, 48, THEME);
+      pill.backgroundImage = drawStatusPillBackground(520, 48, THEME, true);
     } else {
-      pill.backgroundColor = THEME === "cga" ? new Color("#101010") : new Color("#ffe8e8");
+      pill.backgroundImage = drawStatusPillBackground(520, 48, THEME, false);
     }
 
     const inner = pill.addStack();
@@ -126,10 +132,10 @@ async function createWidget() {
     const label = `${isOpen ? "OPEN" : "CLOSED"}${space.message ? ` · ${space.message}` : ""}`;
     const pillText = inner.addText(label);
     pillText.font = Font.boldMonospacedSystemFont(12);
-    pillText.textColor = isOpen ? (THEME === "cga" ? TEXT : new Color("#063b06")) : RED;
+    pillText.textColor = isOpen ? TEXT : RED;
     pillText.lineLimit = 1;
   } else {
-    pill.backgroundColor = THEME === "cga" ? new Color("#111111") : new Color("#efefef");
+    pill.backgroundColor = new Color("#111111");
     const pillText = pill.addText("STATUS UNKNOWN");
     pillText.font = Font.boldMonospacedSystemFont(12);
     pillText.textColor = SUBTEXT;
@@ -154,9 +160,8 @@ async function createWidget() {
   pLabel.textColor = SUBTEXT;
 
   let wattsText = "n/a";
-  if (typeof space?.watts === "number" && isFinite(space.watts)) {
-    wattsText = `${space.watts.toFixed(0)} W`;
-  }
+  if (typeof space?.watts === "number" && isFinite(space.watts)) wattsText = `${space.watts.toFixed(0)} W`;
+
   const pValue = powerRow.addText(wattsText);
   pValue.font = Font.boldMonospacedSystemFont(12);
   pValue.textColor = (typeof space?.watts === "number") ? ACCENT : SUBTEXT;
@@ -256,7 +261,6 @@ async function getSpaceStatusAndPower() {
   }
 
   if (open === null && watts === null && !message) return null;
-
   return { open: open === true, message, lastchange, watts };
 }
 
@@ -298,7 +302,7 @@ async function getLatestProject() {
     const url =
       "https://nurdspace.nl/api.php?action=query&list=recentchanges" +
       "&rcnamespace=0" +
-      "&rclimit=50" +
+      "&rclimit=60" +
       "&rcprop=title|timestamp" +
       "&format=json";
 
@@ -311,7 +315,7 @@ async function getLatestProject() {
       const title = (c?.title || "").trim();
       if (!title) continue;
 
-      // Hard filters (defensive)
+      // Defensive filtering
       if (title.includes(":")) continue; // User:, Template:, File:, Category:, etc.
       if (title === "Main Page" || title === "Main_Page") continue;
 
@@ -358,8 +362,10 @@ function drawSparkline(values, width, height) {
   ctx.opaque = false;
   ctx.respectScreenScale = true;
 
+  const stroke = THEME === "cga" ? new Color("#00ffff", 0.95) : new Color(ACCENT.hex, 0.95);
+
   if (!values || values.length < 2) {
-    ctx.setStrokeColor(new Color(ACCENT.hex, 0.25));
+    ctx.setStrokeColor(new Color(stroke.hex, 0.35));
     ctx.setLineWidth(2);
     const p = new Path();
     p.move(new Point(0, height - 3));
@@ -383,12 +389,12 @@ function drawSparkline(values, width, height) {
     else path.addLine(new Point(x, y));
   }
 
-  ctx.setStrokeColor(new Color(ACCENT.hex, 0.9));
+  ctx.setStrokeColor(stroke);
   ctx.setLineWidth(2);
   ctx.addPath(path);
   ctx.strokePath();
 
-  ctx.setFillColor(new Color(ACCENT.hex, 0.9));
+  ctx.setFillColor(stroke);
   const lastNorm = (values[values.length - 1] - min) / span;
   const lastY = (height - 2) - lastNorm * (height - 4);
   ctx.fillEllipse(new Rect(width - 3, lastY - 3, 6, 6));
@@ -396,107 +402,110 @@ function drawSparkline(values, width, height) {
   return ctx.getImage();
 }
 
-// -------- Retro CRT backgrounds --------
+// -------- Backgrounds --------
 
-function drawTerminalBackgroundLightCRT(width, height) {
+// light-crt = green phosphor CRT terminal
+function drawBackgroundPhosphor(width, height) {
   const ctx = new DrawContext();
   ctx.size = new Size(width, height);
   ctx.opaque = true;
 
-  // Slightly darker base so scanlines/noise are visible
-  ctx.setFillColor(new Color("#f2fff2"));
+  // Dark base
+  ctx.setFillColor(new Color("#040804"));
   ctx.fillRect(new Rect(0, 0, width, height));
 
-  // Terminal noise text (stronger than before)
+  // Terminal noise text (visible)
   ctx.setFont(Font.mediumMonospacedSystemFont(12));
-  ctx.setTextColor(new Color("#00aa00", clamp01(0.06 * CRT_INTENSITY)));
+  ctx.setTextColor(new Color("#00ff66", clamp01(0.20 * CRT_INTENSITY)));
 
-  const lines = Math.floor(height / 24);
+  const lines = Math.floor(height / 22);
   for (let i = 0; i < lines; i++) {
-    const y = 8 + i * 24;
-    const txt = `$ ssh nurd@space | git pull | make all | pwr=${randInt(200, 1800)}W | 0x${randHex(6)}`;
+    const y = 8 + i * 22;
+    const txt = `nurdspace@space:~$ status=${randHex(4)} pwr=${randInt(200, 1800)}W 0x${randHex(10)}`;
     ctx.drawText(txt, new Point(12, y));
   }
 
-  // CRT scanlines (stronger)
-  const scanAlpha = clamp01(0.055 * CRT_INTENSITY);
+  // Scanlines
+  const scanAlpha = clamp01(0.15 * CRT_INTENSITY);
   for (let y = 0; y < height; y += 3) {
     ctx.setFillColor(new Color("#000000", scanAlpha));
     ctx.fillRect(new Rect(0, y, width, 1));
   }
 
   // Phosphor glow band
-  ctx.setFillColor(new Color("#00aa00", clamp01(0.06 * CRT_INTENSITY)));
-  ctx.fillRect(new Rect(0, Math.floor(height * 0.28), width, Math.floor(height * 0.22)));
-
-  // Random “fuzz” pixels (very subtle)
-  const fuzzAlpha = clamp01(0.06 * (CRT_INTENSITY - 0.2));
-  ctx.setFillColor(new Color("#00aa00", fuzzAlpha));
-  for (let i = 0; i < 220; i++) {
-    const x = randInt(0, width - 2);
-    const y = randInt(0, height - 2);
-    if (Math.random() < 0.6) ctx.fillRect(new Rect(x, y, 1, 1));
-  }
-
-  // Vignette edges (no gradients; layered rectangles)
-  const steps = 8;
-  for (let i = 0; i < steps; i++) {
-    const inset = i * 8;
-    const a = (i + 1) / steps;
-    ctx.setStrokeColor(new Color("#000000", 0.015 * a));
-    ctx.setLineWidth(10);
-    ctx.strokeRect(new Rect(inset, inset, width - inset * 2, height - inset * 2));
-  }
-
-  return ctx.getImage();
-}
-
-function drawTerminalBackgroundCGA(width, height) {
-  const ctx = new DrawContext();
-  ctx.size = new Size(width, height);
-  ctx.opaque = true;
-
-  ctx.setFillColor(new Color("#040704"));
-  ctx.fillRect(new Rect(0, 0, width, height));
-
-  ctx.setFont(Font.mediumMonospacedSystemFont(12));
-  ctx.setTextColor(new Color("#00ff66", 0.20));
-
-  const lines = Math.floor(height / 22);
-  for (let i = 0; i < lines; i++) {
-    const y = 8 + i * 22;
-    const txt = `nurdspace@space:~$ pwr=${randInt(200, 1800)}W  0x${randHex(10)}`;
-    ctx.drawText(txt, new Point(12, y));
-  }
-
-  for (let y = 0; y < height; y += 3) {
-    ctx.setFillColor(new Color("#000000", 0.16));
-    ctx.fillRect(new Rect(0, y, width, 1));
-  }
-
-  // Glow band
-  ctx.setFillColor(new Color("#00ff66", 0.08));
+  ctx.setFillColor(new Color("#00ff66", clamp01(0.09 * CRT_INTENSITY)));
   ctx.fillRect(new Rect(0, Math.floor(height * 0.25), width, Math.floor(height * 0.25)));
 
   return ctx.getImage();
 }
 
-function drawScanlinePillBackground(width, height, theme) {
+// cga = classic CGA-ish (cyan/magenta/white)
+function drawBackgroundCGA(width, height) {
+  const ctx = new DrawContext();
+  ctx.size = new Size(width, height);
+  ctx.opaque = true;
+
+  // CGA black base
+  ctx.setFillColor(new Color("#000000"));
+  ctx.fillRect(new Rect(0, 0, width, height));
+
+  // Dither blocks (CGA-ish)
+  for (let y = 0; y < height; y += 10) {
+    for (let x = 0; x < width; x += 10) {
+      const r = Math.random();
+      if (r < 0.10) ctx.setFillColor(new Color("#00ffff", 0.10));       // cyan
+      else if (r < 0.16) ctx.setFillColor(new Color("#ff55ff", 0.10));  // magenta
+      else continue;
+      ctx.fillRect(new Rect(x, y, 10, 10));
+    }
+  }
+
+  // Scanlines (slightly lighter than phosphor)
+  for (let y = 0; y < height; y += 3) {
+    ctx.setFillColor(new Color("#000000", 0.10));
+    ctx.fillRect(new Rect(0, y, width, 1));
+  }
+
+  // A thin “CGA bar” band
+  ctx.setFillColor(new Color("#00ffff", 0.06));
+  ctx.fillRect(new Rect(0, Math.floor(height * 0.30), width, Math.floor(height * 0.12)));
+
+  return ctx.getImage();
+}
+
+// -------- Status pill backgrounds --------
+
+function drawStatusPillBackground(width, height, theme, isOpen) {
   const ctx = new DrawContext();
   ctx.size = new Size(width, height);
   ctx.opaque = false;
   ctx.respectScreenScale = true;
 
-  ctx.setFillColor(theme === "cga" ? new Color("#071007") : new Color("#e8ffe8"));
-  ctx.fillRect(new Rect(0, 0, width, height));
+  if (theme === "cga") {
+    // CGA pill: cyan for open, magenta for closed, with scanlines
+    ctx.setFillColor(isOpen ? new Color("#001a1a") : new Color("#1a001a"));
+    ctx.fillRect(new Rect(0, 0, width, height));
 
-  for (let y = 0; y < height; y += 3) {
-    ctx.setFillColor(theme === "cga" ? new Color("#00ff66", 0.10) : new Color("#00aa00", 0.10));
-    ctx.fillRect(new Rect(0, y, width, 1));
+    const lineColor = isOpen ? new Color("#00ffff", 0.18) : new Color("#ff55ff", 0.18);
+    for (let y = 0; y < height; y += 3) {
+      ctx.setFillColor(lineColor);
+      ctx.fillRect(new Rect(0, y, width, 1));
+    }
+  } else {
+    // Phosphor pill
+    ctx.setFillColor(isOpen ? new Color("#071007") : new Color("#100707"));
+    ctx.fillRect(new Rect(0, 0, width, height));
+
+    const lineColor = isOpen ? new Color("#00ff66", 0.16) : new Color("#ff3366", 0.14);
+    for (let y = 0; y < height; y += 3) {
+      ctx.setFillColor(lineColor);
+      ctx.fillRect(new Rect(0, y, width, 1));
+    }
+
+    // glow band
+    ctx.setFillColor(isOpen ? new Color("#00ff66", 0.08) : new Color("#ff3366", 0.06));
+    ctx.fillRect(new Rect(0, Math.floor(height * 0.35), width, Math.floor(height * 0.30)));
   }
-
-  ctx.setFillColor(theme === "cga" ? new Color("#00ff66", 0.06) : new Color("#00aa00", 0.06));
-  ctx.fillRect(new Rect(0, Math.floor(height * 0.35), width, Math.floor(height * 0.3)));
 
   return ctx.getImage();
 }
@@ -519,7 +528,7 @@ function formatAgo(unixSeconds) {
 function addPlaceholder(row) {
   const ph = row.addStack();
   ph.size = new Size(95, 70);
-  ph.backgroundColor = THEME === "cga" ? new Color("#071007") : new Color("#e8ffe8");
+  ph.backgroundColor = THEME === "cga" ? new Color("#111111") : new Color("#071007");
   ph.cornerRadius = 10;
 
   const sym = SFSymbol.named("hammer");
