@@ -35,4 +35,4 @@ Instantly see:
 ## 📸 Screenshot
 
 ```md
-![Widget Screenshot](widget.png)
+![Widget Screenshot](IMG_1738.jpeg)
