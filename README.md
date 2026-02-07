@@ -34,5 +34,4 @@ Instantly see:
 
 ## 📸 Screenshot
 
-```md
 ![Widget Screenshot](IMG_1738.jpeg)
